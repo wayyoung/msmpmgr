@@ -33,6 +33,11 @@ def get_plugins(argv: list[str]) -> tuple[Plugin, ...]:
             else:
                 raise ValueError(f"Invalid plugin path: {path}")
 
+    # Always search the built-in plugins directory next to this package
+    builtin_plugins_dir = Path(__file__).resolve().parent.parent / "plugins"
+    if builtin_plugins_dir.is_dir() and builtin_plugins_dir not in paths:
+        paths.insert(0, builtin_plugins_dir)
+
     files: Final = tuple(file for path in paths for file in path.glob("*_group.py"))
 
     plugins: Final[list[Plugin]] = []

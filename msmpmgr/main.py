@@ -1,9 +1,9 @@
-"""Entry point for the `smpmgr` application."""
+"""Entry point for the `msmpmgr` application."""
 
 import asyncio
 import logging
 import sys
-from importlib.metadata import version as get_version
+from importlib.metadata import PackageNotFoundError, version as get_version
 from pathlib import Path
 from typing import Final, cast
 
@@ -18,34 +18,35 @@ from smpclient.requests.image_management import ImageStatesRead, ImageStatesWrit
 from smpclient.requests.os_management import ResetWrite
 from typing_extensions import Annotated, assert_never
 
-from smpmgr import (
-    enumeration_management,
+from msmpmgr import (
     file_management,
     image_management,
     os_management,
-    shell_management,
     stat_management,
-    terminal,
 )
-from smpmgr.common import (
+from msmpmgr.common import (
     Options,
     TransportDefinition,
     connect_with_spinner,
     get_smpclient,
     smp_request,
 )
-from smpmgr.image_management import upload_with_progress_bar
-from smpmgr.logging import LogLevel, setup_logging
-from smpmgr.plugins import get_plugins
-from smpmgr.user import intercreate
+from msmpmgr.image_management import upload_with_progress_bar
+from msmpmgr.logging import LogLevel, setup_logging
+from msmpmgr.plugins import get_plugins
 
 logger = logging.getLogger(__name__)
+
+try:
+    _VERSION = get_version('msmpmgr')
+except PackageNotFoundError:
+    _VERSION = "dev"
 
 # Intercept and modify sys.argv to look for plugins
 plugins: Final = get_plugins(sys.argv)
 
 HELP_LINES: Final = (
-    f"Simple Management Protocol (SMP) Manager Version {get_version('smpmgr')}\n",
+    f"Simple Management Protocol (SMP) Manager Version {_VERSION}\n",
     "\n[dim]Copyright (c) 2023-2025 Intercreate, Inc. and Contributors[/dim]\n",
 ) + (
     (
@@ -69,13 +70,9 @@ app.add_typer(os_management.app)
 app.add_typer(stat_management.app)
 app.add_typer(image_management.app)
 app.add_typer(file_management.app)
-app.add_typer(enumeration_management.app)
-app.add_typer(intercreate.app)
-app.command()(shell_management.shell)
-app.command()(terminal.terminal)
 
 for plugin in plugins:
-    app.add_typer(plugin.app)
+    app.registered_commands.extend(plugin.app.registered_commands)
 
 
 @app.callback(invoke_without_command=True)
@@ -83,7 +80,10 @@ def options(
     ctx: typer.Context,
     ip: str = typer.Option(None, help="The IP address to connect to for UDP transport"),
     port: str = typer.Option(
-        None, help="The serial port to connect to, e.g. COM1, /dev/ttyACM0, etc."
+        None, envvar="MSMPMGR_PORT",
+        help="Transport address. Formats: VID:PID (USB), VID:PID:serialno (USB specific device), "
+        "or serial port path (e.g. /dev/ttyACM0, COM1). "
+        "Falls back to env var MSMPMGR_PORT if not set."
     ),
     ble: str = typer.Option(None, help="The Bluetooth address to connect to"),
     timeout: float = typer.Option(
@@ -119,7 +119,7 @@ def options(
             f"call. This is a bug! {sys.argv=}"
         )
     if version:
-        print(get_version('smpmgr'))
+        print(_VERSION)
         raise typer.Exit()
 
     setup_logging(loglevel, logfile)
@@ -137,9 +137,6 @@ def options(
             raise typer.Exit()
         print("A command is required, see [bold]--help[/bold] for available commands.")
         raise typer.Exit()
-
-    # TODO: type of transport is inferred from the argument given (--port, --ble, --usb, etc), but
-    # it must be the case that only one is provided.
 
 
 @app.command()
@@ -165,7 +162,7 @@ def upgrade(
             "access for recovery is not available. "
             "Best practice: always test first by marking for test swap, "
             "rebooting to verify the image works, "
-            "then confirm the running image with 'smpmgr image state-write --confirm' "
+            "then confirm the running image with 'msmpmgr image state-write --confirm' "
             "(or some other mechanism).",
         ),
     ] = False,
@@ -218,7 +215,6 @@ def upgrade(
 
         if slot != 0 or confirm:
             if bypass_inspect:
-                # Read hash from device since we skipped local image inspection
                 r = await smp_request(
                     smpclient, options, ImageStatesRead(), "Waiting for image states..."
                 )
@@ -230,9 +226,9 @@ def upgrade(
                     if len(r.images) == 0:
                         print("No images on device!")
                         raise typer.Exit(code=1)
-                    for image in r.images:
-                        if image.slot == slot:
-                            image_hash = image.hash
+                    for image_entry in r.images:
+                        if image_entry.slot == slot:
+                            image_hash = image_entry.hash
                             break
                     if image_hash is None:
                         print(f"Image with slot {slot} not found!")
@@ -285,13 +281,13 @@ def upgrade(
 
 @app.command()
 def interactive() -> None:
-    """Open the `smpmgr` interactive shell. Type 'exit' or 'quit' to exit."""
+    """Open the `msmpmgr` interactive shell. Type 'exit' or 'quit' to exit."""
 
     print("".join(HELP_LINES))
     print("Type 'exit' or 'quit' to exit the shell.\n")
 
     while True:
-        args = typer.prompt("smpmgr", prompt_suffix=' >').split()
+        args = typer.prompt("msmpmgr", prompt_suffix=' >').split()
 
         if args[0] in {"exit", "quit"}:
             break

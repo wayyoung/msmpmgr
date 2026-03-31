@@ -22,7 +22,7 @@ from smpclient.generics import error, success
 from smpclient.mcuboot import ImageInfo
 from smpclient.requests.image_management import ImageErase, ImageStatesRead, ImageStatesWrite
 
-from smpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
+from msmpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
 
 app = typer.Typer(name="image", help="The SMP Image Management Group.")
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ def state_write(
             "if it fails to boot. "
             "Best practice: always test first by marking for test swap, "
             "rebooting to verify the image works, "
-            "then confirm the running image with 'smpmgr image state-write --confirm' "
+            "then confirm the running image with 'msmpmgr image state-write --confirm' "
             "(or some other mechanism).",
         ),
     ] = False,
@@ -170,6 +170,24 @@ async def upload_with_progress_bar(
         except OSError as e:
             logger.error(f"Connection to device lost: {e.__class__.__name__} - {e}")
             raise typer.Exit(code=1)
+
+
+async def upload_no_progress_bar(
+    smpclient: SMPClient, file: typer.FileBinaryRead | BufferedReader, slot: int = 0
+) -> None:
+    """Upload a FW image without progress bar UI."""
+    image = file.read()
+    file.close()
+    try:
+        async for offset in smpclient.upload(image, slot):
+            logger.info(f"Upload {offset=}")
+    except SMPBadStartDelimiter as e:
+        logger.info(f"Bad start delimiter: {e}")
+        logger.error("Got an unexpected response, is the device an SMP server?")
+        raise typer.Exit(code=1)
+    except OSError as e:
+        logger.error(f"Connection to device lost: {e.__class__.__name__} - {e}")
+        raise typer.Exit(code=1)
 
 
 @app.command()

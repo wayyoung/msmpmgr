@@ -1,5 +1,5 @@
 [project]
-name = "smpmgr"
+name = "msmpmgr"
 dynamic = ["version"]
 description = "Simple Management Protocol (SMP) Manager for remotely managing MCU firmware"
 authors = [{ name = "JP Hutchins", email = "jp@intercreate.io" }]
@@ -7,11 +7,11 @@ readme = "README.md"
 license = "Apache-2.0"
 
 [tool.poetry]
-packages = [{ include = "smpmgr" }]
+packages = [{ include = "msmpmgr" }]
 version = "0.0.0"
 
 [tool.poetry.scripts]
-smpmgr = "smpmgr.main:app"
+msmpmgr = "msmpmgr.main:app"
 
 [tool.poetry.requires-plugins]
 poetry-dynamic-versioning = { version = ">=1.0.0,<2.0.0", extras = ["plugin"] }
@@ -33,6 +33,12 @@ python = ">=3.10, <4"
 smpclient = "^6.0.0"
 typer = { extras = ["all"], version = "^0.16.0" }
 readchar = "^4.0.5"
+pyusb = "^1.2.1"
+intelhex = "^2.3.0"
+imgtool = "^2.1.0"
+cryptography = "^44.0.0"
+PyYAML = "^6.0.2"
+filelock = "^3.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.3"

@@ -11,6 +11,9 @@ dist
 # mcumgr-client
 mcumgr-client*
 
+# device-specific plugin (not tracked)
+plugins/mgmt_ex_group.py
+
 # pyinstaller
 build
 dist

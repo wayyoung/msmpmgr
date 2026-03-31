@@ -6,7 +6,7 @@ from rich import print
 from rich.table import Table
 from smpclient.requests.statistics_management import GroupData, ListOfGroups
 
-from smpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
+from msmpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
 
 app = typer.Typer(name="statistics", help="The SMP stat Management Group.")
 
