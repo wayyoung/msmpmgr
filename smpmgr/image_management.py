@@ -174,15 +174,30 @@ def upload(
     ctx: typer.Context,
     file: Annotated[Path, typer.Argument(help="Path to FW image")],
     slot: Annotated[int, typer.Option(help="The image slot to upload to")] = 0,
+    bypass_inspect: Annotated[
+        bool,
+        typer.Option(
+            "--bypass-inspect",
+            help="Skip local MCUboot image inspection. "
+            "This is useful when uploading images that are not in MCUboot format, such as "
+            "custom bootloader formats (e.g., NXP's SB3.1). "
+            "[bold red]WARNING[/bold red]: When using this option, the responsibility for "
+            "validating image integrity is placed entirely on the device's bootloader. "
+            "If the bootloader does not verify the image, corrupted firmware could be uploaded. "
+            "[bold red]Only use this option if your bootloader performs its own image integrity "
+            "validation.[/bold red]",
+        ),
+    ] = False,
 ) -> None:
     """Upload a FW image."""
 
-    try:
-        image_info = ImageInfo.load_file(str(file))
-        logger.info(str(image_info))
-    except Exception:
-        logger.exception("Inspection of FW image failed")
-        raise typer.Exit(code=1)
+    if not bypass_inspect:
+        try:
+            image_info = ImageInfo.load_file(str(file))
+            logger.info(str(image_info))
+        except Exception:
+            logger.exception("Inspection of FW image failed")
+            raise typer.Exit(code=1)
 
     options = cast(Options, ctx.obj)
     smpclient = get_smpclient(options)
