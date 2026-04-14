@@ -13,7 +13,7 @@ from rich import print
 from smp import error as smperr
 from smp.os_management import OS_MGMT_RET_RC
 from smpclient.generics import error, error_v1, error_v2, success
-from smpclient.mcuboot import IMAGE_TLV, ImageInfo, TLVNotFound
+from smpclient.mcuboot import IMAGE_TLV, ImageInfo, ImageTLVValue, TLVNotFound
 from smpclient.requests.image_management import ImageStatesRead, ImageStatesWrite
 from smpclient.requests.os_management import ResetWrite
 from typing_extensions import Annotated, assert_never
@@ -34,7 +34,7 @@ from smpmgr.common import (
     get_smpclient,
     smp_request,
 )
-from smpmgr.image_management import upload_with_progress_bar
+from smpmgr.image_management import ImageFormat, ImageFormatOption, upload_with_progress_bar
 from smpmgr.logging import LogLevel, setup_logging
 from smpmgr.plugins import get_plugins
 from smpmgr.user import intercreate
@@ -169,42 +169,37 @@ def upgrade(
             "(or some other mechanism).",
         ),
     ] = False,
-    bypass_inspect: Annotated[
-        bool,
-        typer.Option(
-            "--bypass-inspect",
-            help="Skip local MCUboot image inspection and read the image hash from the device "
-            "instead of extracting it from the file. "
-            "This is useful when uploading images that are not in MCUboot format, such as "
-            "custom bootloader formats (e.g., NXP's SB3.1) where the hash may be calculated "
-            "differently (e.g., over a specific block rather than the entire binary). "
-            "[bold red]WARNING[/bold red]: When using this option, the responsibility for "
-            "validating image integrity is placed entirely on the device's bootloader. "
-            "If the bootloader does not verify the image, corrupted firmware could be uploaded "
-            "and marked as valid. "
-            "It's assumed the image format encodes some sort of integrity check "
-            "(e.g., CRC or hash)."
-            "[bold red]Only use this option if your bootloader performs its own image integrity "
-            "validation.[/bold red]",
-        ),
-    ] = False,
+    format: ImageFormatOption = ImageFormat.MCUBOOT,
 ) -> None:
     """Upload a FW image, mark it for next boot, and reset the device."""
 
-    if not bypass_inspect:
-        try:
-            image_info = ImageInfo.load_file(str(file))
-            logger.info(str(image_info))
-        except Exception as e:
-            typer.echo(f"Inspection of FW image failed: {e}")
-            raise typer.Exit(code=1)
+    image_tlv_sha256: ImageTLVValue | None = None
 
-        try:
-            image_tlv_sha256 = image_info.get_tlv(IMAGE_TLV.SHA256)
-            logger.info(f"IMAGE_TLV_SHA256: {image_tlv_sha256}")
-        except TLVNotFound:
-            typer.echo("Could not find IMAGE_TLV_SHA256 in image.")
-            raise typer.Exit(code=1)
+    match format:
+        case ImageFormat.MCUBOOT:
+            try:
+                image_info = ImageInfo.load_file(str(file))
+                logger.info(str(image_info))
+            except Exception as e:
+                typer.echo(
+                    f"Inspection of FW image failed: {e}\n"
+                    "If this is not an MCUboot image, retry with --format=any."
+                )
+                raise typer.Exit(code=1)
+
+            try:
+                image_tlv_sha256 = image_info.get_tlv(IMAGE_TLV.SHA256)
+                logger.info(f"IMAGE_TLV_SHA256: {image_tlv_sha256}")
+            except TLVNotFound:
+                typer.echo(
+                    "Could not find IMAGE_TLV_SHA256 in image. "
+                    "If this is not an MCUboot image, retry with --format=any."
+                )
+                raise typer.Exit(code=1)
+        case ImageFormat.ANY:
+            pass
+        case _ as unreachable:
+            assert_never(unreachable)
 
     options = cast(Options, ctx.obj)
     smpclient = get_smpclient(options)
@@ -217,28 +212,33 @@ def upgrade(
             await upload_with_progress_bar(smpclient, f, slot)
 
         if slot != 0 or confirm:
-            if bypass_inspect:
-                # Read hash from device since we skipped local image inspection
-                r = await smp_request(smpclient, ImageStatesRead(), "Waiting for image states...")
+            match format:
+                case ImageFormat.MCUBOOT:
+                    assert image_tlv_sha256 is not None
+                    image_hash = image_tlv_sha256.value
+                case ImageFormat.ANY:
+                    r = await smp_request(
+                        smpclient, ImageStatesRead(), "Waiting for image states..."
+                    )
 
-                if error(r):
-                    print(r)
-                    raise typer.Exit(code=1)
-                elif success(r):
-                    if len(r.images) == 0:
-                        print("No images on device!")
+                    if error(r):
+                        print(r)
                         raise typer.Exit(code=1)
-                    for image in r.images:
-                        if image.slot == slot:
-                            image_hash = image.hash
-                            break
-                    if image_hash is None:
-                        print(f"Image with slot {slot} not found!")
-                        raise typer.Exit(code=1)
-                else:
-                    assert_never(r)
-            else:
-                image_hash = image_tlv_sha256.value
+                    elif success(r):
+                        if len(r.images) == 0:
+                            print("No images on device!")
+                            raise typer.Exit(code=1)
+                        for image in r.images:
+                            if image.slot == slot:
+                                image_hash = image.hash
+                                break
+                        if image_hash is None:
+                            print(f"Image with slot {slot} not found!")
+                            raise typer.Exit(code=1)
+                    else:
+                        assert_never(r)
+                case _ as unreachable:
+                    assert_never(unreachable)
 
             image_states_response = await smp_request(
                 smpclient,

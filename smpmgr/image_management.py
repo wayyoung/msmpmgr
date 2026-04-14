@@ -2,9 +2,10 @@
 
 import asyncio
 import logging
+from enum import StrEnum, unique
 from io import BufferedReader
 from pathlib import Path
-from typing import Annotated, cast
+from typing import Annotated, TypeAlias, assert_never, cast
 
 import typer
 from rich import print
@@ -23,6 +24,32 @@ from smpclient.mcuboot import ImageInfo
 from smpclient.requests.image_management import ImageErase, ImageStatesRead, ImageStatesWrite
 
 from smpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
+
+
+@unique
+class ImageFormat(StrEnum):
+    MCUBOOT = "mcuboot"
+    ANY = "any"
+
+
+ImageFormatOption: TypeAlias = Annotated[
+    ImageFormat,
+    typer.Option(
+        "--format",
+        help="The expected image format for local inspection. "
+        "'mcuboot' (default) inspects the image as an MCUboot image before upload. "
+        "'any' skips local MCUboot inspection and does not attempt to interpret the file "
+        "as an MCUboot image. "
+        "This is useful when uploading images that are not in MCUboot format, such as "
+        "custom bootloader formats (e.g., NXP's SB3.1). "
+        "[bold red]WARNING[/bold red]: When using --format=any, the responsibility for "
+        "validating image integrity is placed entirely on the device's bootloader. "
+        "If the bootloader does not verify the image, corrupted firmware could be uploaded. "
+        "[bold red]Only use --format=any if your bootloader performs its own image integrity "
+        "validation.[/bold red]",
+    ),
+]
+
 
 app = typer.Typer(name="image", help="The SMP Image Management Group.")
 logger = logging.getLogger(__name__)
@@ -174,30 +201,25 @@ def upload(
     ctx: typer.Context,
     file: Annotated[Path, typer.Argument(help="Path to FW image")],
     slot: Annotated[int, typer.Option(help="The image slot to upload to")] = 0,
-    bypass_inspect: Annotated[
-        bool,
-        typer.Option(
-            "--bypass-inspect",
-            help="Skip local MCUboot image inspection. "
-            "This is useful when uploading images that are not in MCUboot format, such as "
-            "custom bootloader formats (e.g., NXP's SB3.1). "
-            "[bold red]WARNING[/bold red]: When using this option, the responsibility for "
-            "validating image integrity is placed entirely on the device's bootloader. "
-            "If the bootloader does not verify the image, corrupted firmware could be uploaded. "
-            "[bold red]Only use this option if your bootloader performs its own image integrity "
-            "validation.[/bold red]",
-        ),
-    ] = False,
+    format: ImageFormatOption = ImageFormat.MCUBOOT,
 ) -> None:
     """Upload a FW image."""
 
-    if not bypass_inspect:
-        try:
-            image_info = ImageInfo.load_file(str(file))
-            logger.info(str(image_info))
-        except Exception:
-            logger.exception("Inspection of FW image failed")
-            raise typer.Exit(code=1)
+    match format:
+        case ImageFormat.MCUBOOT:
+            try:
+                image_info = ImageInfo.load_file(str(file))
+                logger.info(str(image_info))
+            except Exception:
+                logger.exception(
+                    "Inspection of FW image failed. "
+                    "If this is not an MCUboot image, retry with --format=any."
+                )
+                raise typer.Exit(code=1)
+        case ImageFormat.ANY:
+            pass
+        case _ as unreachable:
+            assert_never(unreachable)
 
     options = cast(Options, ctx.obj)
     smpclient = get_smpclient(options)
