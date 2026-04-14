@@ -28,6 +28,8 @@ from smpmgr import (
     terminal,
 )
 from smpmgr.common import (
+    DEFAULT_LINE_BUFFERS,
+    DEFAULT_LINE_LENGTH,
     Options,
     TransportDefinition,
     connect_with_spinner,
@@ -93,9 +95,9 @@ def options(
     | None = typer.Option(
         None,
         help=(
-            "Maximum transmission unit supported by the SMP server serial transport."
-            " Will default to smpclient upstream value."
-            " Ignored for BLE transport since the BLE connection will report MTU."
+            "For UDP transport, the maximum transmission unit."
+            " Deprecated for serial transport; use --line-length and --line-buffers instead."
+            " Ignored for BLE transport."
         ),
     ),
     baudrate: int
@@ -104,6 +106,24 @@ def options(
         help=(
             "The baudrate of the serial port to connect to, e.g. 115200."
             " Will default to smpclient upstream value."
+        ),
+    ),
+    line_length: int
+    | None = typer.Option(
+        None,
+        help=(
+            "Serial transport line length in bytes."
+            " Must match the SMP server configuration."
+            f" Default of None will use {DEFAULT_LINE_LENGTH}."
+        ),
+    ),
+    line_buffers: int
+    | None = typer.Option(
+        None,
+        help=(
+            "Serial transport line buffer count."
+            " Must match the SMP server configuration."
+            f" Default of None will use {DEFAULT_LINE_BUFFERS}."
         ),
     ),
     loglevel: LogLevel = typer.Option(None, help="Debug log level"),
@@ -129,6 +149,8 @@ def options(
         transport=TransportDefinition(port=port, ble=ble, ip=ip),
         mtu=mtu,
         baudrate=baudrate,
+        line_length=line_length,
+        line_buffers=line_buffers,
     )
     logger.info(ctx.obj)
 

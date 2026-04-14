@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass, fields
-from typing import Type, TypedDict, TypeVar
+from typing import Final, Type, TypedDict, TypeVar, assert_never
 
 import typer
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -36,6 +36,12 @@ class Options:
     transport: TransportDefinition
     mtu: int | None
     baudrate: int | None
+    line_length: int | None
+    line_buffers: int | None
+
+
+DEFAULT_LINE_LENGTH: Final = 128
+DEFAULT_LINE_BUFFERS: Final = 2
 
 
 class SMPSerialTransportKwargs(TypedDict, total=False):
@@ -52,10 +58,41 @@ def get_custom_smpclient(options: Options, smp_client_cls: Type[TSMPClient]) -> 
             f"Initializing SMPClient with the SMPSerialTransport, {options.transport.port=}"
         )
         kwargs: SMPSerialTransportKwargs = {}
-        if options.mtu is not None:
-            kwargs['max_smp_encoded_frame_size'] = options.mtu
-            kwargs['line_length'] = options.mtu
-            kwargs['line_buffers'] = 1
+        match (options.line_length, options.line_buffers, options.mtu):
+            case (int(), int(), None):
+                kwargs['line_length'] = options.line_length
+                kwargs['line_buffers'] = options.line_buffers
+                kwargs['max_smp_encoded_frame_size'] = options.line_length * options.line_buffers
+            case (int(), None, None):
+                kwargs['line_length'] = options.line_length
+                kwargs['line_buffers'] = DEFAULT_LINE_BUFFERS
+                kwargs['max_smp_encoded_frame_size'] = options.line_length * DEFAULT_LINE_BUFFERS
+            case (None, int(), None):
+                kwargs['line_length'] = DEFAULT_LINE_LENGTH
+                kwargs['line_buffers'] = options.line_buffers
+                kwargs['max_smp_encoded_frame_size'] = DEFAULT_LINE_LENGTH * options.line_buffers
+            case (None, None, int()):
+                kwargs['line_length'] = options.mtu
+                kwargs['line_buffers'] = 1
+                kwargs['max_smp_encoded_frame_size'] = options.mtu
+                typer.echo(
+                    typer.style(
+                        "Warning: --mtu is deprecated for serial transport."
+                        " Use --line-length and --line-buffers instead."
+                        f" --mtu {options.mtu} has been applied as"
+                        f" --line-length {options.mtu} --line-buffers 1.",
+                        fg=typer.colors.YELLOW,
+                    )
+                )
+            case (None, None, None):
+                kwargs['line_length'] = DEFAULT_LINE_LENGTH
+                kwargs['line_buffers'] = DEFAULT_LINE_BUFFERS
+                kwargs['max_smp_encoded_frame_size'] = DEFAULT_LINE_LENGTH * DEFAULT_LINE_BUFFERS
+            case (_, _, int()):
+                typer.echo("--mtu cannot be used with --line-length or --line-buffers.")
+                raise typer.Exit(code=1)
+            case _:
+                assert_never((options.line_length, options.line_buffers, options.mtu))  # type: ignore[arg-type] # noqa: E501
         if options.baudrate is not None:
             kwargs['baudrate'] = options.baudrate
         return smp_client_cls(SMPSerialTransport(**kwargs), options.transport.port, options.timeout)
