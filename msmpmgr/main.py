@@ -77,7 +77,7 @@ app.command()(shell_management.shell)
 app.command()(terminal.terminal)
 
 for plugin in plugins:
-    app.add_typer(plugin.app)
+    app.registered_commands.extend(plugin.app.registered_commands)
 
 
 @app.callback(invoke_without_command=True)
