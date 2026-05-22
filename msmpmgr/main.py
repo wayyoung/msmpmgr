@@ -85,7 +85,11 @@ def options(
     ctx: typer.Context,
     ip: str = typer.Option(None, help="The IP address to connect to for UDP transport"),
     port: str = typer.Option(
-        None, help="The serial port to connect to, e.g. COM1, /dev/ttyACM0, etc."
+        None,
+        envvar="MSMPMGR_PORT",
+        help="Transport address. Formats: VID:PID (USB), VID:PID:serialno "
+             "(USB specific device), or serial port path (e.g. /dev/ttyACM0, "
+             "COM1). Falls back to env var MSMPMGR_PORT if not set.",
     ),
     ble: str = typer.Option(None, help="The Bluetooth address to connect to"),
     timeout: float = typer.Option(

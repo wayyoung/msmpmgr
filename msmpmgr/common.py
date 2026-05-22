@@ -15,6 +15,8 @@ from smpclient.transport.ble import SMPBLETransport
 from smpclient.transport.serial import SMPSerialTransport
 from smpclient.transport.udp import SMPUDPTransport
 
+from msmpmgr.usb_transport import SMPUsbTransport
+
 logger = logging.getLogger(__name__)
 
 TSMPClient = TypeVar(
@@ -54,9 +56,12 @@ class SMPSerialTransportKwargs(TypedDict, total=False):
 def get_custom_smpclient(options: Options, smp_client_cls: Type[TSMPClient]) -> TSMPClient:
     """Return an `SMPClient` subclass to the chosen transport or raise `typer.Exit`."""
     if options.transport.port is not None:
-        logger.info(
-            f"Initializing SMPClient with the SMPSerialTransport, {options.transport.port=}"
-        )
+        port = options.transport.port
+        usb_transport = ':' in port
+        if usb_transport:
+            logger.info(f"Initializing SMPClient with the SMPUsbTransport, {port=}")
+        else:
+            logger.info(f"Initializing SMPClient with the SMPSerialTransport, {port=}")
         kwargs: SMPSerialTransportKwargs = {}
         match (options.line_length, options.line_buffers, options.mtu):
             case (int(), int(), None):
@@ -95,7 +100,14 @@ def get_custom_smpclient(options: Options, smp_client_cls: Type[TSMPClient]) -> 
                 assert_never((options.line_length, options.line_buffers, options.mtu))  # type: ignore[arg-type] # noqa: E501
         if options.baudrate is not None:
             kwargs['baudrate'] = options.baudrate
-        return smp_client_cls(SMPSerialTransport(**kwargs), options.transport.port, options.timeout)
+        if usb_transport:
+            # VID:PID[:serialno] — pyusb-backed transport. Interface is
+            # auto-discovered by mcumgr SMP subclass (0x60); any kernel
+            # driver on the interface is detached for the session.
+            return smp_client_cls(
+                SMPUsbTransport(**kwargs), port, options.timeout
+            )
+        return smp_client_cls(SMPSerialTransport(**kwargs), port, options.timeout)
     elif options.transport.ble is not None:
         logger.info(f"Initializing SMPClient with the SMPBLETransport, {options.transport.ble=}")
         return smp_client_cls(
