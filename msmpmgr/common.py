@@ -1,11 +1,16 @@
 """Common CLI helpers from rich, typer, click, etc."""
 
 import asyncio
+import functools
 import logging
+import os
+import tempfile
 from dataclasses import dataclass, fields
-from typing import Final, Type, TypedDict, TypeVar, assert_never
+from datetime import datetime, timedelta
+from typing import Any, Callable, Final, Type, TypedDict, TypeVar, assert_never
 
 import typer
+from filelock import FileLock
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from serial import SerialException
 from smp.exceptions import SMPBadStartDelimiter
@@ -161,12 +166,47 @@ async def connect_with_spinner(smpclient: SMPClient) -> None:
         raise typer.Exit(code=1)
 
 
+async def connect_no_spinner(smpclient: SMPClient, timeout_s: float = 2.0) -> None:
+    """Connect to the SMP Server without UI; raises `typer.Exit` if connection fails."""
+    try:
+        await smpclient.connect(timeout_s)
+        return
+    except asyncio.TimeoutError:
+        logger.error("Transport error: connection timeout")
+    except SerialException as e:
+        logger.error(f"Serial transport error: {e.__class__.__name__} - {e}")
+
+    raise typer.Exit(code=1)
+
+
 async def smp_request(
     smpclient: SMPClient,
-    request: SMPRequest[TRep, TEr1, TEr2],
+    *args: Any,
     description: str | None = None,
     timeout_s: float | None = None,
-) -> TRep | TEr1 | TEr2:
+) -> Any:
+    """Send an SMP request with progress UI.
+
+    Two call signatures are supported for backwards compatibility:
+      - new: ``smp_request(smpclient, request, description=..., timeout_s=...)``
+      - legacy (used by external plugins): ``smp_request(smpclient, options, request, description)``
+        — ``options.timeout`` is used as the default ``timeout_s``.
+    """
+    options: Options | None = None
+    if args and isinstance(args[0], Options):
+        options = args[0]
+        request = args[1] if len(args) > 1 else None
+        if description is None and len(args) > 2:
+            description = args[2]
+        if timeout_s is None:
+            timeout_s = options.timeout
+    else:
+        request = args[0] if args else None
+        if description is None and len(args) > 1:
+            description = args[1]
+    if request is None:
+        raise TypeError("smp_request: missing request argument")
+
     with Progress(
         SpinnerColumn(), TextColumn("[progress.description]{task.description}")
     ) as progress:
@@ -188,3 +228,112 @@ async def smp_request(
             progress.update(task, description=f"{description} OS error", completed=True)
             logger.error(f"Connection to device lost: {e.__class__.__name__} - {e}")
             raise typer.Exit(code=1)
+
+
+async def smp_request_no_spinner(
+    smpclient: SMPClient,
+    options: "Options",
+    request: SMPRequest[TRep, TEr1, TEr2],
+    description: str | None = None,
+    retry: int = 0,
+) -> TRep | TEr1 | TEr2:
+    """Send an SMP request without UI, with optional retry support."""
+    r = None
+    for i in range(retry + 1):
+        try:
+            if i > 0:
+                await connect_no_spinner(smpclient, options.timeout)
+            r = await smpclient.request(request, options.timeout)
+            break
+        except Exception as e:
+            if i < retry:
+                try:
+                    await asyncio.wait_for(smpclient.disconnect(), timeout=3)
+                except Exception:
+                    pass
+            else:
+                if isinstance(e, asyncio.TimeoutError):
+                    logger.error(f"Timeout waiting for response, rcnt: {i}")
+                    raise typer.Exit(code=1)
+                elif isinstance(e, SMPBadStartDelimiter):
+                    logger.error(f"Is the device an SMP server? rcnt: {i}")
+                    raise typer.Exit(code=1)
+                elif isinstance(e, OSError):
+                    logger.error(
+                        f"Connection to device lost: {e.__class__.__name__} - {e}, rcnt: {i}"
+                    )
+                    raise typer.Exit(code=1)
+                else:
+                    logger.error(f"rcnt: {i}, {e}")
+                    raise e
+    return r  # type: ignore[return-value]
+
+
+async def ping_connect(
+    smpclient: SMPClient, options: "Options", timeout: int, nopg: bool
+) -> bool:
+    """Retry connect-then-echo-ping loop until success or timeout."""
+    from smpclient.requests.os_management import EchoWrite
+
+    tout: datetime | None = None
+    if nopg:
+        while tout is None or datetime.now() < tout:
+            if tout is None:
+                tout = datetime.now() + timedelta(seconds=timeout)
+            try:
+                await connect_no_spinner(smpclient)
+                r = await smp_request_no_spinner(smpclient, options, EchoWrite(d="ping"))  # type: ignore
+                if str(r.r) == "ping":
+                    return True
+            except Exception:
+                try:
+                    await asyncio.wait_for(smpclient.disconnect(), timeout=3)
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+        return False
+    with Progress(
+        SpinnerColumn(), TextColumn("[progress.description]{task.description}")
+    ) as progress:
+        connect_task_description = "Connecting..."
+        connect_task = progress.add_task(description=connect_task_description, total=None)
+        while tout is None or datetime.now() < tout:
+            if tout is None:
+                tout = datetime.now() + timedelta(seconds=timeout)
+            try:
+                await connect_no_spinner(smpclient)
+                r = await smp_request_no_spinner(smpclient, options, EchoWrite(d="ping"))  # type: ignore
+                if str(r.r) == "ping":
+                    progress.update(
+                        connect_task,
+                        description=f"{connect_task_description} success",
+                        completed=True,
+                    )
+                    return True
+            except Exception:
+                try:
+                    await asyncio.wait_for(smpclient.disconnect(), timeout=3)
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+        progress.update(
+            connect_task, description=f"{connect_task_description} failed!!", completed=True
+        )
+        return False
+
+
+def with_multiprocess_lock(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator to ensure only one instance of a command can run at a time across processes."""
+    lock_file = os.path.join(tempfile.gettempdir(), "msmpmgr_command.lock")
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        logger.debug(f"Acquiring lock for {func.__name__}")
+        with FileLock(lock_file, timeout=1):
+            logger.debug(f"Lock acquired for {func.__name__}")
+            try:
+                return func(*args, **kwargs)
+            finally:
+                logger.debug(f"Releasing lock for {func.__name__}")
+
+    return wrapper

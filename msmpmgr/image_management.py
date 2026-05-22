@@ -196,6 +196,24 @@ async def upload_with_progress_bar(
             raise typer.Exit(code=1)
 
 
+async def upload_no_progress_bar(
+    smpclient: SMPClient, file: typer.FileBinaryRead | BufferedReader, slot: int = 0
+) -> None:
+    """Upload a FW image without progress bar UI (used by external plugins)."""
+    image = file.read()
+    file.close()
+    try:
+        async for offset in smpclient.upload(image, slot):
+            logger.info(f"Upload {offset=}")
+    except SMPBadStartDelimiter as e:
+        logger.info(f"Bad start delimiter: {e}")
+        logger.error("Got an unexpected response, is the device an SMP server?")
+        raise typer.Exit(code=1)
+    except OSError as e:
+        logger.error(f"Connection to device lost: {e.__class__.__name__} - {e}")
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def upload(
     ctx: typer.Context,
