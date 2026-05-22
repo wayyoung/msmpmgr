@@ -41,10 +41,14 @@ class TransportDefinition:
 class Options:
     timeout: float
     transport: TransportDefinition
-    mtu: int | None
-    baudrate: int | None
-    line_length: int | None
-    line_buffers: int | None
+    # The following have defaults so external plugins (e.g. mgmt_ex_group.py
+    # in ~/opt/msmpmgr/plugins) that construct Options(timeout=..., transport=...,
+    # mtu=...) without passing the new line_length / line_buffers fields keep
+    # working without modification.
+    mtu: int | None = None
+    baudrate: int | None = None
+    line_length: int | None = None
+    line_buffers: int | None = None
 
 
 DEFAULT_LINE_LENGTH: Final = 128
