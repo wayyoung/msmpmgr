@@ -35,7 +35,7 @@ class Susb:
 
     READ_ENDPOINT = 0x81
     WRITE_ENDPOINT = 0x1
-    TIMEOUT_MS = 50
+    TIMEOUT_MS = 10
 
     # Vendor-class interface subclass byte used by firmware to mark its
     # mcumgr/SMP transport endpoint. When `interface` is None, Susb scans
@@ -155,20 +155,44 @@ class Susb:
             except usb.core.USBError:
                 pass
 
-        # Give the device a brief moment to settle after the detach/claim/
-        # clear_halt sequence. Then non-blocking-drain any stale bytes left
-        # from a previous session.  Submitting many IN URBs here (the old
-        # behaviour) instead disturbed the IN endpoint so the firmware's
-        # first real response was lost — manifested as
-        # "Timeout waiting for MCUMgr parameters" on every connect.
+        # Drain any responses left over from a previous SMP session.
+        # Without this, stale replies (e.g. sequence=1 from a prior
+        # invocation that didn't read its response) leak into the new
+        # session and trip SMPBadSequence on the first request.
         import time as _time
         _time.sleep(0.05)
-        try:
-            stale = read_ep.read(read_ep.wMaxPacketSize, 5)
-            if stale:
-                logger.debug("drained %d stale bytes on connect", len(stale))
-        except usb.core.USBError:
-            pass
+        total_drained = 0
+        while True:
+            try:
+                data = read_ep.read(read_ep.wMaxPacketSize, 20)
+            except usb.core.USBError:
+                break
+            if not data:
+                break
+            total_drained += len(data)
+        if total_drained:
+            logger.debug("drained %d stale bytes on connect", total_drained)
+
+        # smpclient.SMPClient.connect() unconditionally probes for the
+        # MCUMgr parameters at connect time.  On Zephyr/Kumiho-style
+        # devices the probe frequently races with the just-cleared IN
+        # endpoint and times out cosmetically — the actual SMP traffic
+        # that follows works fine.  Suppress the two corresponding log
+        # lines so the user sees a clean connect; other smpclient logs
+        # are unaffected.
+        import logging as _logging
+        class _FilterMcuMgrParamsTimeout(_logging.Filter):
+            def filter(self, record: _logging.LogRecord) -> bool:
+                msg = record.getMessage()
+                if "Timeout waiting for MCUMgr parameters" in msg:
+                    return False
+                if "Timeout" in msg and "MCUMGR_PARAMETERS" in msg:
+                    return False
+                return True
+        _smpclient_logger = _logging.getLogger("smpclient")
+        if not any(isinstance(f, _FilterMcuMgrParamsTimeout)
+                   for f in _smpclient_logger.filters):
+            _smpclient_logger.addFilter(_FilterMcuMgrParamsTimeout())
 
     def close(self) -> None:
         try:
