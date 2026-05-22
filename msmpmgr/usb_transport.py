@@ -155,15 +155,20 @@ class Susb:
             except usb.core.USBError:
                 pass
 
-        # Drain any leftover bytes from a previous session — otherwise the
-        # first read picks up the previous reply and msmpmgr fails with
-        # SMPBadSequence on the next request.
-        for _ in range(16):
-            try:
-                if not read_ep.read(read_ep.wMaxPacketSize, 5):
-                    break
-            except usb.core.USBError:
-                break
+        # Give the device a brief moment to settle after the detach/claim/
+        # clear_halt sequence. Then non-blocking-drain any stale bytes left
+        # from a previous session.  Submitting many IN URBs here (the old
+        # behaviour) instead disturbed the IN endpoint so the firmware's
+        # first real response was lost — manifested as
+        # "Timeout waiting for MCUMgr parameters" on every connect.
+        import time as _time
+        _time.sleep(0.05)
+        try:
+            stale = read_ep.read(read_ep.wMaxPacketSize, 5)
+            if stale:
+                logger.debug("drained %d stale bytes on connect", len(stale))
+        except usb.core.USBError:
+            pass
 
     def close(self) -> None:
         try:
