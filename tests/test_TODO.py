@@ -1,4 +1,4 @@
-from smpmgr.main import app  # noqa
+from msmpmgr.main import app  # noqa
 
 
 def test_nothing() -> None:
