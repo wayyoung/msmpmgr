@@ -9,7 +9,7 @@ from rich import print
 from smpclient.requests.enumeration_management import GroupDetails, ListSupportedGroups
 from typing_extensions import Annotated
 
-from smpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
+from msmpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
 
 app = typer.Typer(name="enum", help="The SMP Enumeration Management Group.")
 logger = logging.getLogger(__name__)

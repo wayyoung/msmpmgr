@@ -23,7 +23,7 @@ from smpclient.generics import error, success
 from smpclient.mcuboot import ImageInfo
 from smpclient.requests.image_management import ImageErase, ImageStatesRead, ImageStatesWrite
 
-from smpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
+from msmpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
 
 
 @unique
@@ -105,7 +105,7 @@ def state_write(
             "if it fails to boot. "
             "Best practice: always test first by marking for test swap, "
             "rebooting to verify the image works, "
-            "then confirm the running image with 'smpmgr image state-write --confirm' "
+            "then confirm the running image with 'msmpmgr image state-write --confirm' "
             "(or some other mechanism).",
         ),
     ] = False,

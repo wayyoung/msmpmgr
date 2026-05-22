@@ -6,7 +6,7 @@ import readchar
 import typer
 from serial import Serial
 
-from smpmgr.common import Options
+from msmpmgr.common import Options
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ def terminal(ctx: typer.Context) -> None:
     async def f() -> None:
         if options.transport.port is None:
             print("--port <port> option is required for the terminal, e.g.")
-            print("smpmgr --port COM1 terminal")
+            print("msmpmgr --port COM1 terminal")
             return
 
         print(f"\x1b[2mOpening terminal to {options.transport.port}...", end="")

@@ -33,6 +33,15 @@ def get_plugins(argv: list[str]) -> tuple[Plugin, ...]:
             else:
                 raise ValueError(f"Invalid plugin path: {path}")
 
+    # Search for plugins directory next to the executable (frozen) or package source
+    import sys
+    if getattr(sys, 'frozen', False):
+        exe_plugins_dir = Path(sys.executable).resolve().parent / "plugins"
+    else:
+        exe_plugins_dir = Path(__file__).resolve().parent.parent / "plugins"
+    if exe_plugins_dir.is_dir() and exe_plugins_dir not in paths:
+        paths.insert(0, exe_plugins_dir)
+
     files: Final = tuple(file for path in paths for file in path.glob("*_group.py"))
 
     plugins: Final[list[Plugin]] = []

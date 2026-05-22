@@ -116,7 +116,7 @@ def get_custom_smpclient(options: Options, smp_client_cls: Type[TSMPClient]) -> 
             f"A transport option is required; "
             f"one of [{', '.join(map(lambda x: '--' + x.name, fields(options.transport)))}]."
         )
-        typer.echo("See smpmgr --help.")
+        typer.echo("See msmpmgr --help.")
         raise typer.Exit(code=1)
 
 

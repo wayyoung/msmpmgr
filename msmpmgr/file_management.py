@@ -27,7 +27,7 @@ from smpclient.requests.file_management import (
 )
 from typing_extensions import Annotated
 
-from smpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
+from msmpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
 
 app = typer.Typer(name="file", help="The SMP File Management Group.")
 logger = logging.getLogger(__name__)

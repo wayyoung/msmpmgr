@@ -20,7 +20,7 @@ from smp.exceptions import SMPBadStartDelimiter
 from smpclient.extensions import intercreate as ic
 from typing_extensions import Annotated
 
-from smpmgr.common import Options, connect_with_spinner, get_custom_smpclient
+from msmpmgr.common import Options, connect_with_spinner, get_custom_smpclient
 
 app = typer.Typer(
     name="ic", help=f"The Intercreate User Group ({smphdr.UserGroupId.INTERCREATE.value})"

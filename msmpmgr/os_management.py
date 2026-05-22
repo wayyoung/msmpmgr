@@ -5,7 +5,7 @@ import typer
 from rich import print
 from smpclient.requests.os_management import EchoWrite, ResetWrite
 
-from smpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
+from msmpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
 
 app = typer.Typer(name="os", help="The SMP OS Management Group.")
 

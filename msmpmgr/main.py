@@ -1,4 +1,4 @@
-"""Entry point for the `smpmgr` application."""
+"""Entry point for the `msmpmgr` application."""
 
 import asyncio
 import logging
@@ -18,7 +18,7 @@ from smpclient.requests.image_management import ImageStatesRead, ImageStatesWrit
 from smpclient.requests.os_management import ResetWrite
 from typing_extensions import Annotated, assert_never
 
-from smpmgr import (
+from msmpmgr import (
     enumeration_management,
     file_management,
     image_management,
@@ -27,7 +27,7 @@ from smpmgr import (
     stat_management,
     terminal,
 )
-from smpmgr.common import (
+from msmpmgr.common import (
     DEFAULT_LINE_BUFFERS,
     DEFAULT_LINE_LENGTH,
     Options,
@@ -36,10 +36,10 @@ from smpmgr.common import (
     get_smpclient,
     smp_request,
 )
-from smpmgr.image_management import ImageFormat, ImageFormatOption, upload_with_progress_bar
-from smpmgr.logging import LogLevel, setup_logging
-from smpmgr.plugins import get_plugins
-from smpmgr.user import intercreate
+from msmpmgr.image_management import ImageFormat, ImageFormatOption, upload_with_progress_bar
+from msmpmgr.logging import LogLevel, setup_logging
+from msmpmgr.plugins import get_plugins
+from msmpmgr.user import intercreate
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 plugins: Final = get_plugins(sys.argv)
 
 HELP_LINES: Final = (
-    f"Simple Management Protocol (SMP) Manager Version {get_version('smpmgr')}\n",
+    f"Simple Management Protocol (SMP) Manager Version {get_version('msmpmgr')}\n",
     "\n[dim]Copyright (c) 2023-2025 Intercreate, Inc. and Contributors[/dim]\n",
 ) + (
     (
@@ -139,7 +139,7 @@ def options(
             f"call. This is a bug! {sys.argv=}"
         )
     if version:
-        print(get_version('smpmgr'))
+        print(get_version('msmpmgr'))
         raise typer.Exit()
 
     setup_logging(loglevel, logfile)
@@ -187,7 +187,7 @@ def upgrade(
             "access for recovery is not available. "
             "Best practice: always test first by marking for test swap, "
             "rebooting to verify the image works, "
-            "then confirm the running image with 'smpmgr image state-write --confirm' "
+            "then confirm the running image with 'msmpmgr image state-write --confirm' "
             "(or some other mechanism).",
         ),
     ] = False,
@@ -304,13 +304,13 @@ def upgrade(
 
 @app.command()
 def interactive() -> None:
-    """Open the `smpmgr` interactive shell. Type 'exit' or 'quit' to exit."""
+    """Open the `msmpmgr` interactive shell. Type 'exit' or 'quit' to exit."""
 
     print("".join(HELP_LINES))
     print("Type 'exit' or 'quit' to exit the shell.\n")
 
     while True:
-        args = typer.prompt("smpmgr", prompt_suffix=' >').split()
+        args = typer.prompt("msmpmgr", prompt_suffix=' >').split()
 
         if args[0] in {"exit", "quit"}:
             break

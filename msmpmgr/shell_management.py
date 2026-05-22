@@ -9,7 +9,7 @@ from smpclient.generics import error, success
 from smpclient.requests.shell_management import Execute
 from typing_extensions import assert_never
 
-from smpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
+from msmpmgr.common import Options, connect_with_spinner, get_smpclient, smp_request
 
 
 def shell(
