@@ -1,4 +1,4 @@
-"""Logging configuration for smpmgr."""
+"""Logging configuration for msmpmgr."""
 
 import asyncio
 import logging
@@ -23,16 +23,16 @@ class LogLevel(Enum):
 
 
 def setup_logging(loglevel: LogLevel | None, logfile: Path | None) -> None:
-    """Setup logging for smpmgr.
+    """Setup logging for msmpmgr.
 
     During normal operation, this function is called once at the start of the program.  However,
     when using the `shell` command, this function may be called multiple times.  This allows the
     user to change the log level and log file without restarting the program.
 
-    For example, to change the log level to DEBUG and the log file to `smpmgr.log`:
+    For example, to change the log level to DEBUG and the log file to `msmpmgr.log`:
 
     ```shell
-    smpmgr > --loglevel DEBUG --logfile smpmgr.log
+    msmpmgr > --loglevel DEBUG --logfile msmpmgr.log
     ```
     This is a valid stand alone command that will save those log settings for the duration of the
     shell session, until one or the other is updated with new values.

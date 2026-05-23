@@ -13,10 +13,10 @@ from typing import Final
 
 from rich import print
 
-exe_name: Final = "smpmgr.exe" if platform.system() == "Windows" else "smpmgr"
+exe_name: Final = "msmpmgr.exe" if platform.system() == "Windows" else "msmpmgr"
 
 print()
-print("[bold green]Building distributable package for smpmgr...")
+print("[bold green]Building distributable package for msmpmgr...")
 print()
 
 exception = None
@@ -27,7 +27,7 @@ try:
     assert subprocess.run(["poetry", "build"]).returncode == 0
 
     # find the sdist archive and unpack it
-    archives = list(Path("dist").glob("smpmgr-*.tar.gz"))
+    archives = list(Path("dist").glob("msmpmgr-*.tar.gz"))
     assert len(archives) == 1
     shutil.unpack_archive(archives[0], "dist")
 
@@ -41,18 +41,18 @@ try:
             (
                 "pyinstaller",
                 "--add-data",
-                f"{str(unpacked_folder)}:smpmgr",
-                "--copy-metadat=smpmgr",
+                f"{str(unpacked_folder)}:msmpmgr",
+                "--copy-metadat=msmpmgr",
                 "--copy-metadata=readchar",
-                "--name=smpmgr",
+                "--name=msmpmgr",
                 "--collect-submodules=shellingham",
                 "--collect-submodules=readchar",
                 "--hidden-import=readchar",
-                "smpmgr/__main__.py",
+                "msmpmgr/__main__.py",
             )
             + (
                 (
-                    "--hidden-import=winrt.windows.foundation.collections",  # https://github.com/intercreate/smpmgr/issues/34 # noqa: E501
+                    "--hidden-import=winrt.windows.foundation.collections",  # https://github.com/intercreate/msmpmgr/issues/34 # noqa: E501
                 )
                 if sys.platform == "win32"
                 else ()
@@ -64,7 +64,7 @@ try:
     # run the executable and check the version
     assert (
         "Version 0.0.0"
-        not in subprocess.run(["dist/smpmgr/smpmgr", "--help"], capture_output=True).stdout.decode()
+        not in subprocess.run(["dist/msmpmgr/msmpmgr", "--help"], capture_output=True).stdout.decode()
     )
 
     platform_system: Final = platform.system().lower()
@@ -72,24 +72,24 @@ try:
 
     # create the folder
     dist_path: Final = Path(
-        "dist", f"smpmgr-{version}-{platform_name}-{platform.machine().lower()}"
+        "dist", f"msmpmgr-{version}-{platform_name}-{platform.machine().lower()}"
     )
     os.makedirs(dist_path, exist_ok=True)
 
     # copy the executable to the folder
-    shutil.copytree(Path("dist", "smpmgr"), Path(dist_path), dirs_exist_ok=True)
+    shutil.copytree(Path("dist", "msmpmgr"), Path(dist_path), dirs_exist_ok=True)
 
     # create a VERSION.txt stamp
     with open(Path(dist_path, "VERSION.txt"), "w") as f:
         f.writelines(
             (
-                "Simple Management Protocol Manager (smpmgr)\n",
+                "Simple Management Protocol Manager (msmpmgr)\n",
                 "\n",
                 "Copyright (c) Intercreate, Inc. 2023-2025\n",
                 "SPDX-License-Identifier: Apache-2.0\n",
                 "\n",
                 "https://www.intercreate.io/\n",
-                "https://github.com/intercreate/smpmgr\n",
+                "https://github.com/intercreate/msmpmgr\n",
                 "\n",
                 f"Version: {version}\n",
                 f"Build date: {datetime.now()}\n",

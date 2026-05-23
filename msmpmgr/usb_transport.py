@@ -37,11 +37,17 @@ class Susb:
     WRITE_ENDPOINT = 0x1
     TIMEOUT_MS = 2
 
+    # Vendor-class interface subclass byte used by firmware to mark its
+    # mcumgr/SMP transport endpoint. When `interface` is None, Susb scans
+    # the device's interfaces and picks the one carrying this subclass so
+    # callers only need to specify VID:PID.
+    SMP_INTERFACE_SUBCLASS = 0x60
+
     def __init__(
         self,
         vendor: int = 0x18D1,
         product: int = 0x500F,
-        interface: int = 1,
+        interface: Optional[int] = None,
         serialname: Optional[str] = None,
     ):
         dev_g = usb.core.find(idVendor=vendor, idProduct=product, find_all=True)
@@ -77,7 +83,24 @@ class Susb:
             pass
 
         cfg = dev.get_active_configuration()
-        intf = usb.util.find_descriptor(cfg, bInterfaceNumber=interface)
+
+        if interface is None:
+            # Auto-discover the SMP interface by subclass.
+            intf = usb.util.find_descriptor(
+                cfg, bInterfaceSubClass=self.SMP_INTERFACE_SUBCLASS
+            )
+            if intf is None:
+                raise SusbError(
+                    "No interface with subclass 0x%02x (SMP/mcumgr) on "
+                    "%04x:%04x" % (self.SMP_INTERFACE_SUBCLASS, vendor, product)
+                )
+            interface = intf.bInterfaceNumber
+            logger.info(
+                "Auto-selected interface %d (subclass 0x%02x) on %04x:%04x",
+                interface, self.SMP_INTERFACE_SUBCLASS, vendor, product,
+            )
+        else:
+            intf = usb.util.find_descriptor(cfg, bInterfaceNumber=interface)
 
         self._dev = dev
         self._cfg = cfg
@@ -89,14 +112,86 @@ class Susb:
         if platform.system() == 'Linux':
             if dev.is_kernel_driver_active(intf.bInterfaceNumber):
                 dev.detach_kernel_driver(intf.bInterfaceNumber)
+        usb.util.claim_interface(dev, intf.bInterfaceNumber)
 
-        read_ep_number = intf.bInterfaceNumber + self.READ_ENDPOINT
-        read_ep = usb.util.find_descriptor(intf, bEndpointAddress=read_ep_number)
+        # Look up the bulk IN / OUT endpoints by direction within the
+        # selected interface. The legacy "interface_number + 0x81/0x01"
+        # heuristic only worked when interfaces happened to be numbered
+        # the same as their endpoint pair — not portable across firmwares
+        # (e.g. Zephyr USBD allocates endpoint addresses globally).
+        read_ep = usb.util.find_descriptor(
+            intf,
+            custom_match=lambda e: (
+                usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN
+                and usb.util.endpoint_type(e.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK
+            ),
+        )
+        write_ep = usb.util.find_descriptor(
+            intf,
+            custom_match=lambda e: (
+                usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT
+                and usb.util.endpoint_type(e.bmAttributes) == usb.util.ENDPOINT_TYPE_BULK
+            ),
+        )
+        if read_ep is None or write_ep is None:
+            raise SusbError(
+                "Bulk endpoints not found on interface %d" % intf.bInterfaceNumber
+            )
         self._read_ep = read_ep
-
-        write_ep_number = intf.bInterfaceNumber + self.WRITE_ENDPOINT
-        write_ep = usb.util.find_descriptor(intf, bEndpointAddress=write_ep_number)
         self._write_ep = write_ep
+        logger.debug(
+            "Endpoints on intf %d: IN=0x%02x OUT=0x%02x",
+            intf.bInterfaceNumber, read_ep.bEndpointAddress, write_ep.bEndpointAddress,
+        )
+
+        # The endpoints may be HALTed if a kernel driver was previously
+        # attached and we just detached it. Clear the stall so the device
+        # will service transfers again.
+        for ep in (read_ep, write_ep):
+            try:
+                dev.clear_halt(ep.bEndpointAddress)
+            except usb.core.USBError:
+                pass
+
+        # Drain any responses left over from a previous SMP session.
+        # Without this, stale replies (e.g. sequence=1 from a prior
+        # invocation that didn't read its response) leak into the new
+        # session and trip SMPBadSequence on the first request.
+        import time as _time
+        _time.sleep(0.05)
+        total_drained = 0
+        while True:
+            try:
+                data = read_ep.read(read_ep.wMaxPacketSize, 20)
+            except usb.core.USBError:
+                break
+            if not data:
+                break
+            total_drained += len(data)
+        if total_drained:
+            logger.debug("drained %d stale bytes on connect", total_drained)
+
+        # smpclient.SMPClient.connect() unconditionally probes for the
+        # MCUMgr parameters at connect time. Many Zephyr/Kumiho-style
+        # devices don't implement that OS_MGMT command, so the probe
+        # times out cosmetically — the actual SMP traffic that follows
+        # works fine. Suppress the two corresponding log lines so the
+        # user sees a clean connect; other smpclient logs are unaffected.
+        import logging as _logging
+
+        class _FilterMcuMgrParamsTimeout(_logging.Filter):
+            def filter(self, record: _logging.LogRecord) -> bool:
+                msg = record.getMessage()
+                if "Timeout waiting for MCUMgr parameters" in msg:
+                    return False
+                if "Timeout" in msg and "MCUMGR_PARAMETERS" in msg:
+                    return False
+                return True
+
+        _smpclient_logger = _logging.getLogger("smpclient")
+        if not any(isinstance(f, _FilterMcuMgrParamsTimeout)
+                   for f in _smpclient_logger.filters):
+            _smpclient_logger.addFilter(_FilterMcuMgrParamsTimeout())
 
     def close(self) -> None:
         try:
@@ -112,7 +207,7 @@ class Suart:
         self,
         vendor: int = 0x18D1,
         product: int = 0x500F,
-        interface: int = 0,
+        interface: Optional[int] = None,
         serialname: Optional[str] = None,
     ):
         self._done = threading.Event()

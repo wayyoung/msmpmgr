@@ -41,8 +41,14 @@ class TransportDefinition:
 class Options:
     timeout: float
     transport: TransportDefinition
-    mtu: int | None
-    baudrate: int | None
+    # The following have defaults so external plugins (e.g. mgmt_ex_group.py
+    # in ~/opt/msmpmgr/plugins) that construct Options(timeout=..., transport=...,
+    # mtu=..., baudrate=...) without passing the newer fields keep working
+    # without modification.
+    mtu: int | None = None
+    baudrate: int | None = None
+    line_length: int | None = None
+    line_buffers: int | None = None
 
 
 DEFAULT_LINE_LENGTH: Final = 128
@@ -67,9 +73,14 @@ def get_custom_smpclient(options: Options, smp_client_cls: Type[TSMPClient]) -> 
             kwargs['line_buffers'] = 1
 
         if ':' in port:
-            # VID:PID[:serialno] → custom raw USB transport
+            # VID:PID[:serialno] → custom raw USB transport.
+            # Pass a short SMPClient timeout (1.0s) so the connect-time
+            # MCUMgr params probe fails fast on Zephyr-style devices that
+            # don't implement OS_MGMT::MCUMGR_PARAMETERS. Our smp_request
+            # helpers pass options.timeout explicitly for actual requests,
+            # so this only governs the internal probe.
             logger.info(f"Initializing SMPClient with SMPUsbTransport, {port=}")
-            return smp_client_cls(SMPUsbTransport(**kwargs), port)
+            return smp_client_cls(SMPUsbTransport(**kwargs), port, 1.0)
         else:
             # /dev/ttyACMx → standard serial transport
             logger.info(f"Initializing SMPClient with SMPSerialTransport, {port=}")
