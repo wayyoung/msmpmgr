@@ -74,13 +74,14 @@ def get_custom_smpclient(options: Options, smp_client_cls: Type[TSMPClient]) -> 
 
         if ':' in port:
             # VID:PID[:serialno] → custom raw USB transport.
-            # Pass a short SMPClient timeout (1.0s) so the connect-time
-            # MCUMgr params probe fails fast on Zephyr-style devices that
-            # don't implement OS_MGMT::MCUMGR_PARAMETERS. Our smp_request
-            # helpers pass options.timeout explicitly for actual requests,
-            # so this only governs the internal probe.
+            # Thread options.timeout through to SMPClient so upstream-style
+            # callers (e.g. image_management.smp_request without explicit
+            # timeout) get the user-configured value.  The MCUMgr-params
+            # probe inside SMPClient.connect() uses the same timeout — its
+            # cosmetic "Timeout waiting for MCUMgr parameters" log lines
+            # are suppressed by the filter installed in Susb.__init__.
             logger.info(f"Initializing SMPClient with SMPUsbTransport, {port=}")
-            return smp_client_cls(SMPUsbTransport(**kwargs), port, 1.0)
+            return smp_client_cls(SMPUsbTransport(**kwargs), port, options.timeout)
         else:
             # /dev/ttyACMx → standard serial transport
             logger.info(f"Initializing SMPClient with SMPSerialTransport, {port=}")
@@ -113,15 +114,34 @@ def get_smpclient(options: Options) -> SMPClient:
     return get_custom_smpclient(options, SMPClient)
 
 
-async def connect_with_spinner(smpclient: SMPClient, timeout_s: float) -> None:
+async def connect_with_spinner(smpclient: SMPClient, timeout_s: float | None = None) -> None:
     """Spin while connecting to the SMP Server; raises `typer.Exit` if connection fails."""
+    from smpclient.exceptions import SMPBadSequence
     with Progress(
         SpinnerColumn(), TextColumn("[progress.description]{task.description}")
     ) as progress:
         connect_task_description = f"Connecting to {smpclient._address}..."
         connect_task = progress.add_task(description=connect_task_description, total=None)
         try:
-            await smpclient.connect(timeout_s)
+            # SMPClient.connect() treats timeout_s=None as "use the value the
+            # client was constructed with" — that's the right behavior here.
+            if timeout_s is None:
+                await smpclient.connect()
+            else:
+                await smpclient.connect(timeout_s)
+            progress.update(
+                connect_task, description=f"{connect_task_description} OK", completed=True
+            )
+            return
+        except SMPBadSequence:
+            # The MCUMgr-params probe inside SMPClient.connect() can pick up
+            # a stale response from a previous SMP session whose sequence
+            # doesn't match. Drain the transport and treat as connected —
+            # the actual SMP traffic the caller is about to send will use
+            # a fresh sequence and work normally.
+            conn = getattr(smpclient._transport, "_conn", None)
+            if conn is not None and hasattr(conn, "flush"):
+                conn.flush()
             progress.update(
                 connect_task, description=f"{connect_task_description} OK", completed=True
             )
@@ -139,8 +159,16 @@ async def connect_with_spinner(smpclient: SMPClient, timeout_s: float) -> None:
 
 async def connect_no_spinner(smpclient: SMPClient, timeout_s: float = 2.0) -> None:
     """Connect to the SMP Server without UI; raises `typer.Exit` if connection fails."""
+    from smpclient.exceptions import SMPBadSequence
     try:
         await smpclient.connect(timeout_s)
+        return
+    except SMPBadSequence:
+        # Stale frame from a previous session leaked into the probe inside
+        # SMPClient.connect(); drain the transport and proceed.
+        conn = getattr(smpclient._transport, "_conn", None)
+        if conn is not None and hasattr(conn, "flush"):
+            conn.flush()
         return
     except asyncio.TimeoutError:
         logger.error("Transport error: connection timeout")
@@ -172,33 +200,84 @@ async def connect_no_spinner(smpclient: SMPClient, timeout_s: float = 2.0) -> No
 # ----------------------------------------------------------------------------
 async def smp_request(
     smpclient: SMPClient,
-    options: Options,
-    request: SMPRequest[TRep, TEr1, TEr2],
+    *args: Any,
     description: str | None = None,
     timeout_s: float | None = None,
-) -> TRep | TEr1 | TEr2:
+) -> Any:
+    """Send an SMP request with progress UI.
+
+    Accepts two call signatures for backwards compatibility:
+      - legacy fork (used by ~/opt/msmpmgr/plugins/mgmt_ex_group.py and the
+        original fork code): ``smp_request(smpclient, options, request,
+        description=..., timeout_s=...)`` — ``options.timeout`` provides the
+        default ``timeout_s``.
+      - upstream new (used by msmpmgr/image_management.py et al. after the
+        squash-merge of intercreate/smpmgr main): ``smp_request(smpclient,
+        request, description=..., timeout_s=...)``.
+
+    The shape is disambiguated by whether the second positional argument is
+    an :class:`Options` instance.
+    """
+    options: Options | None = None
+    if args and isinstance(args[0], Options):
+        options = args[0]
+        request = args[1] if len(args) > 1 else None
+        if description is None and len(args) > 2:
+            description = args[2]
+    else:
+        request = args[0] if args else None
+        if description is None and len(args) > 1:
+            description = args[1]
+    if request is None:
+        raise TypeError("smp_request: missing request argument")
+    if timeout_s is None and options is not None:
+        timeout_s = options.timeout
+
     with Progress(
         SpinnerColumn(), TextColumn("[progress.description]{task.description}")
     ) as progress:
         description = description or f"Waiting for response to {request.__class__.__name__}..."
-        timeout_s = timeout_s if timeout_s is not None else options.timeout
         task = progress.add_task(description=description, total=None)
-        try:
-            r = await smpclient.request(request, timeout_s)
-            progress.update(task, description=f"{description} OK", completed=True)
-            return r
-        except asyncio.TimeoutError:
-            progress.update(task, description=f"{description} timeout", completed=True)
-            logger.error("Timeout waiting for response")
-            raise typer.Exit(code=1)
-        except SMPBadStartDelimiter:
-            progress.update(task, description=f"{description} SMP error", completed=True)
-            logger.error("Is the device an SMP server?")
-            raise typer.Exit(code=1)
-        except OSError as e:
-            progress.update(task, description=f"{description} OS error", completed=True)
-            logger.error(f"Connection to device lost: {e.__class__.__name__} - {e}")
-            raise typer.Exit(code=1)
+
+        # Resync on SMPBadSequence. When a previous SMP session left an
+        # unread response in the device's IN buffer, the first frame this
+        # session reads is the stale one (sequence != ours). Drain the
+        # transport and retry once; the next frame is our actual response.
+        from smpclient.exceptions import SMPBadSequence
+        for attempt in range(2):
+            try:
+                r = await smpclient.request(request, timeout_s)
+                progress.update(task, description=f"{description} OK", completed=True)
+                return r
+            except SMPBadSequence as e:
+                logger.warning(
+                    "Stale response from previous SMP session (%s); "
+                    "draining and retrying", e
+                )
+                # Reach into the transport to clear any further stale frames.
+                conn = getattr(smpclient._transport, "_conn", None)
+                if conn is not None and hasattr(conn, "flush"):
+                    conn.flush()
+                if attempt == 1:
+                    progress.update(task, description=f"{description} SMP error",
+                                    completed=True)
+                    raise typer.Exit(code=1)
+                continue
+            except asyncio.TimeoutError:
+                progress.update(task, description=f"{description} timeout",
+                                completed=True)
+                logger.error("Timeout waiting for response")
+                raise typer.Exit(code=1)
+            except SMPBadStartDelimiter:
+                progress.update(task, description=f"{description} SMP error",
+                                completed=True)
+                logger.error("Is the device an SMP server?")
+                raise typer.Exit(code=1)
+            except OSError as e:
+                progress.update(task, description=f"{description} OS error",
+                                completed=True)
+                logger.error(f"Connection to device lost: {e.__class__.__name__} - {e}")
+                raise typer.Exit(code=1)
 
 
 async def smp_request_no_spinner(

@@ -35,7 +35,9 @@ class Susb:
 
     READ_ENDPOINT = 0x81
     WRITE_ENDPOINT = 0x1
-    TIMEOUT_MS = 2
+    # 50 ms is long enough to absorb USB host scheduling jitter on HS bulk
+    # without making the SMP transport reader spin too fast on a quiet bus.
+    TIMEOUT_MS = 50
 
     # Vendor-class interface subclass byte used by firmware to mark its
     # mcumgr/SMP transport endpoint. When `interface` is None, Susb scans
@@ -153,23 +155,13 @@ class Susb:
             except usb.core.USBError:
                 pass
 
-        # Drain any responses left over from a previous SMP session.
-        # Without this, stale replies (e.g. sequence=1 from a prior
-        # invocation that didn't read its response) leak into the new
-        # session and trip SMPBadSequence on the first request.
+        # Settle the bus after detach/claim/clear_halt — empirically the
+        # firmware needs a brief idle window for its IN endpoint to be
+        # ready to serve fresh reads.  Skip the drain loop entirely: any
+        # stale frames from a previous session are absorbed by
+        # smpclient's SMP-UART parser when sequence numbers don't match.
         import time as _time
         _time.sleep(0.05)
-        total_drained = 0
-        while True:
-            try:
-                data = read_ep.read(read_ep.wMaxPacketSize, 20)
-            except usb.core.USBError:
-                break
-            if not data:
-                break
-            total_drained += len(data)
-        if total_drained:
-            logger.debug("drained %d stale bytes on connect", total_drained)
 
         # smpclient.SMPClient.connect() unconditionally probes for the
         # MCUMgr parameters at connect time. Many Zephyr/Kumiho-style
@@ -225,7 +217,11 @@ class Suart:
 
     def read(self) -> Optional[array.array]:
         try:
-            return self._susb._read_ep.read(64, self._susb.TIMEOUT_MS)
+            # Request the endpoint's max packet size so the URB is large
+            # enough for a full HS bulk packet (512 B). Reading less can
+            # truncate a single transaction and report "babble" on Linux.
+            mps = self._susb._read_ep.wMaxPacketSize or 64
+            return self._susb._read_ep.read(mps, self._susb.TIMEOUT_MS)
         except Exception:
             return None
 
@@ -233,9 +229,38 @@ class Suart:
         return self.read()
 
     def flush(self) -> None:
-        for _ in range(20):
+        """Drain the IN endpoint until it has been quiet for one timeout
+        window.  A single None return doesn't mean the firmware is done
+        sending — it just means nothing arrived within TIMEOUT_MS.  We
+        require N consecutive empty reads so that fragments arriving
+        with brief inter-packet gaps are also drained."""
+        empty_streak = 0
+        for _ in range(40):
             if self.read_all() is None:
-                break
+                empty_streak += 1
+                if empty_streak >= 3:
+                    break
+            else:
+                empty_streak = 0
+
+    def reset_input_buffer(self) -> None:
+        """pyserial-compatible alias for flush(). SMPSerialTransport.connect()
+        calls this right after open(); without the method we get an
+        AttributeError and the SMP frame parser sees stale bytes from a
+        previous session as if they belonged to the new request, which
+        trips SMPBadSequence."""
+        self.flush()
+
+    def reset_output_buffer(self) -> None:
+        """pyserial-compatible no-op; bulk OUT has no host-side queue here."""
+        pass
+
+    @property
+    def in_waiting(self) -> int:
+        """pyserial-compatible attribute. We don't peek at the IN endpoint
+        without consuming, so report 0 — smpclient's reader is fine with
+        that and just falls through to its read_all() polling path."""
+        return 0
 
     def close(self) -> None:
         self.flush()
