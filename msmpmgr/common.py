@@ -7,7 +7,7 @@ import os
 import tempfile
 from dataclasses import dataclass, fields
 from datetime import datetime, timedelta
-from typing import Any, Callable, Type, TypedDict, TypeVar
+from typing import Any, Callable, Final, Type, TypedDict, TypeVar
 
 import typer
 from filelock import FileLock
@@ -43,6 +43,10 @@ class Options:
     transport: TransportDefinition
     mtu: int | None
     baudrate: int | None
+
+
+DEFAULT_LINE_LENGTH: Final = 128
+DEFAULT_LINE_BUFFERS: Final = 2
 
 
 class SMPSerialTransportKwargs(TypedDict, total=False):
@@ -135,6 +139,26 @@ async def connect_no_spinner(smpclient: SMPClient, timeout_s: float = 2.0) -> No
     raise typer.Exit(code=1)
 
 
+# ----------------------------------------------------------------------------
+# Fork divergence from upstream smpmgr (notify on next merge):
+#
+# Upstream commit 688cef6 ("refactor: defer default timeout to SMPClient and
+# unused argument 'options'") removed the `options: Options` parameter from
+# `smp_request`, `smp_request_no_spinner`, and `ping_connect`, and instead
+# threads `options.timeout` into the SMPClient constructor at connect time.
+#
+# This fork intentionally keeps `options` in those signatures because external
+# plugins (notably ~/opt/msmpmgr/plugins/mgmt_ex_group.py) call them with the
+# legacy signature. Dropping `options` would break every external plugin call
+# site without warning.
+#
+# When merging upstream changes:
+#   - Do NOT take upstream's signature change for these three functions.
+#   - When porting upstream call sites (e.g. main.py), re-add `options` as
+#     the second positional argument.
+#   - If external plugins are ever migrated off the legacy signature, this
+#     divergence can be retired and the upstream signature adopted.
+# ----------------------------------------------------------------------------
 async def smp_request(
     smpclient: SMPClient,
     options: Options,
