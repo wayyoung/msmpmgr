@@ -25,8 +25,10 @@ from msmpmgr import (
     stat_management,
 )
 from msmpmgr.common import (
+    DEFAULT_BLE_TIMEOUT_S,
     DEFAULT_LINE_BUFFERS,
     DEFAULT_LINE_LENGTH,
+    DEFAULT_TIMEOUT_S,
     Options,
     TransportDefinition,
     connect_with_spinner,
@@ -149,8 +151,8 @@ def options(
     setup_logging(loglevel, logfile)
 
     if timeout is None:
-        # BLE links need a longer default; other transports keep 2.0s.
-        timeout = 30.0 if ble is not None else 2.0
+        # BLE links need a longer default; other transports keep the wired default.
+        timeout = DEFAULT_BLE_TIMEOUT_S if ble is not None else DEFAULT_TIMEOUT_S
 
     ctx.obj = Options(
         timeout=timeout,

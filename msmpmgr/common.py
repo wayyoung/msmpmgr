@@ -54,6 +54,14 @@ class Options:
 DEFAULT_LINE_LENGTH: Final = 128
 DEFAULT_LINE_BUFFERS: Final = 2
 
+# Default transport timeouts. BLE link setup (scan + GATT connect) and BLE
+# request round-trips routinely exceed the wired default, so BLE gets a longer
+# default. Used by main.py (Options.timeout) and the connect helpers below so a
+# bare connect_no_spinner(smpclient) — as called by external plugins — still
+# waits long enough on BLE.
+DEFAULT_TIMEOUT_S: Final = 2.0
+DEFAULT_BLE_TIMEOUT_S: Final = 30.0
+
 
 class SMPSerialTransportKwargs(TypedDict, total=False):
     max_smp_encoded_frame_size: int
@@ -125,6 +133,10 @@ async def connect_with_spinner(smpclient: SMPClient, timeout_s: float | None = N
         try:
             # SMPClient.connect() treats timeout_s=None as "use the value the
             # client was constructed with" — that's the right behavior here.
+            # The BLE client is constructed without an explicit timeout, so give
+            # it the longer BLE default rather than smpclient's wired default.
+            if timeout_s is None and isinstance(smpclient._transport, SMPBLETransport):
+                timeout_s = DEFAULT_BLE_TIMEOUT_S
             if timeout_s is None:
                 await smpclient.connect()
             else:
@@ -157,9 +169,18 @@ async def connect_with_spinner(smpclient: SMPClient, timeout_s: float | None = N
         raise typer.Exit(code=1)
 
 
-async def connect_no_spinner(smpclient: SMPClient, timeout_s: float = 2.0) -> None:
+async def connect_no_spinner(smpclient: SMPClient, timeout_s: float | None = None) -> None:
     """Connect to the SMP Server without UI; raises `typer.Exit` if connection fails."""
     from smpclient.exceptions import SMPBadSequence
+    if timeout_s is None:
+        # No explicit timeout (e.g. external plugins call connect_no_spinner(
+        # smpclient)); pick a transport-aware default so BLE gets 30s while
+        # wired transports keep 2.0s.
+        timeout_s = (
+            DEFAULT_BLE_TIMEOUT_S
+            if isinstance(smpclient._transport, SMPBLETransport)
+            else DEFAULT_TIMEOUT_S
+        )
     try:
         await smpclient.connect(timeout_s)
         return
