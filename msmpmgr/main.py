@@ -89,8 +89,11 @@ def options(
         "Falls back to env var MSMPMGR_PORT if not set."
     ),
     ble: str = typer.Option(None, help="The Bluetooth address to connect to"),
-    timeout: float = typer.Option(
-        2.0, help="Transport timeout in seconds; how long to wait for requests"
+    timeout: float
+    | None = typer.Option(
+        None,
+        help="Transport timeout in seconds; how long to wait for requests. "
+        "Defaults to 2.0, or 30.0 for BLE.",
     ),
     mtu: int
     | None = typer.Option(
@@ -144,6 +147,10 @@ def options(
         raise typer.Exit()
 
     setup_logging(loglevel, logfile)
+
+    if timeout is None:
+        # BLE links need a longer default; other transports keep 2.0s.
+        timeout = 30.0 if ble is not None else 2.0
 
     ctx.obj = Options(
         timeout=timeout,
